@@ -4,163 +4,182 @@ from flask_cors import CORS
 import bcrypt
 from datetime import datetime, date, time, timedelta
 
-hoje = datetime.now()
-data_atual = hoje.year
-print(data_atual)
-
 app = Flask(__name__)
-CORS(app)  # conexão do FlutterFlow
+CORS(app)
 
-# CONEXAO AO BANCO DE DADOS MYSQL
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="",
-    database="escola_db"
-)
+# === CONEXÃO AO BANCO ===
+def get_db_connection():
+    try:
+        return mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="escola_db"
+        )
+    except mysql.connector.Error as erro:
+        print("Erro ao conectar ao banco:", erro)
+        return None
 
+
+# === HOME ===
 @app.route("/")
 def home():
-    return "Hello world! A API ESTÁ RODANDO!"
+    return "API rodando!"
 
-# ENDPOINT PARA VALIDAR LOGIN E SENHA
+
+# === LOGIN ===
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json()
-    matricula = data.get("matricula")
-    senha = data.get("senha")
+    try:
+        data = request.get_json()
 
-    cursor = db.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM alunos WHERE matricula = %s", (matricula,))
-    user = cursor.fetchone()
-    cursor.close()
+        if not data:
+            return jsonify({"erro": "JSON inválido"}), 400
 
-    if not user:
-        return jsonify({"mensagem": "Usuário inválido!"}), 404
+        matricula = data.get("matricula")
+        senha = data.get("senha")
 
-    # Verifica a senha com hash bcrypt (passwordhash PHP)
-    if bcrypt.checkpw(senha.encode("utf-8"), user["senha"].encode("utf-8")):
+        if not matricula or not senha:
+            return jsonify({"erro": "Campos obrigatórios faltando"}), 400
+
+        db = get_db_connection()
+        if not db:
+            return jsonify({"erro": "Falha na conexão com o banco"}), 500
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute("SELECT * FROM alunos WHERE matricula = %s", (matricula,))
+        user = cursor.fetchone()
+        cursor.close()
+        db.close()
+
+        if not user:
+            return jsonify({"erro": "Usuário não encontrado"}), 404
+
+        if not bcrypt.checkpw(senha.encode("utf-8"), user["senha"].encode("utf-8")):
+            return jsonify({"erro": "Senha incorreta"}), 401
+
         return jsonify({
             "success": True,
             "id": user["id"],
             "nome": user["nome"]
         })
-    else:
-        return jsonify({"mensagem": "Senha incorreta."}), 401
 
-# ENDPOINT PARA VER TODOS OS DADOS DE ENTRADAS, COMUNICADOS, PORCENTAGEM DE PRESENÇA E STATUS DO DIA SALVOS NO BANCO
+    except Exception as e:
+        print("Erro no login:", e)
+        return jsonify({"erro": "Erro interno no servidor"}), 500
+
+
+# === DADOS DO ALUNO ===
 @app.route("/dados/<int:aluno_id>", methods=["GET"])
 def dados(aluno_id):
 
-    mes = request.args.get("mes", type=int)
+    try:
+        mes = request.args.get("mes", type=int)
+        ano_atual = datetime.now().year
+        hoje_date = datetime.now().date()
 
-    dados = {
-        "entradas" : [],
-        "comunicados" : [],
-        "presenca": 0,
-        "status_hoje": "Ainda em registro hoje"
-    }
+        resultado = {
+            "entradas": [],
+            "comunicados": [],
+            "presenca": 0,
+            "status_hoje": "Sem registro"
+        }
 
-    # === comunicados ===
-    cursor = db.cursor(dictionary=True)
-    cursor.execute(f"SELECT * FROM comunicados WHERE YEAR(data_publicacao) = {data_atual} ORDER BY data_publicacao DESC")
+        db = get_db_connection()
+        if not db:
+            return jsonify({"erro": "Falha ao conectar ao banco"}), 500
 
-    comunicados = cursor.fetchall()
+        cursor = db.cursor(dictionary=True)
 
-    # === entradas ===
-    if mes:
-        cursor.execute(
-            """
-            SELECT * FROM entradas
-            WHERE aluno_id = %s AND MONTH(data) = %s
-            """,
-            (aluno_id, mes)
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT * FROM entradas
-            WHERE aluno_id = %s
-            """,
-            (aluno_id,)
-        )
+        # === COMUNICADOS ===
+        cursor.execute("""
+            SELECT id, titulo, imagem_url, conteudo, data_publicacao
+            FROM comunicados
+            WHERE YEAR(data_publicacao) = %s
+            ORDER BY data_publicacao DESC
+        """, (ano_atual,))
 
-    entradas = cursor.fetchall()
+        comunicados = cursor.fetchall()
 
-    # === porcentagem de presença ===
+        # === ENTRADAS DO ALUNO ===
+        if mes:
+            cursor.execute("""
+                SELECT id, status, data
+                FROM entradas
+                WHERE aluno_id = %s AND MONTH(data) = %s
+            """, (aluno_id, mes))
+        else:
+            cursor.execute("""
+                SELECT id, status, data
+                FROM entradas
+                WHERE aluno_id = %s
+            """, (aluno_id,))
 
-    if mes:
-        cursor.execute(
-            """
-            SELECT ROUND((SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2)
-            AS porcentagem_presenca
+        entradas = cursor.fetchall()
+
+        # === PORCENTAGEM DE PRESENÇA ===
+        if mes:
+            cursor.execute("""
+                SELECT ROUND(
+                    (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
+                ) AS p
+                FROM entradas
+                WHERE aluno_id = %s AND MONTH(data) = %s
+            """, (aluno_id, mes))
+        else:
+            cursor.execute("""
+                SELECT ROUND(
+                    (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
+                ) AS p
+                FROM entradas
+                WHERE aluno_id = %s
+            """, (aluno_id,))
+
+        presenca = cursor.fetchone()["p"] or 0
+
+        # === STATUS DO DIA ===
+        cursor.execute("""
+            SELECT status
             FROM entradas
-            WHERE aluno_id = %s AND MONTH(data) = %s
-            """,
-            (aluno_id, mes)
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT ROUND((SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2)
-            AS porcentagem_presenca
-            FROM entradas
-            WHERE aluno_id = %s
-            """,
-            (aluno_id,)
-        )
+            WHERE aluno_id = %s AND DATE(data) = %s
+        """, (aluno_id, hoje_date))
 
-    presenca = cursor.fetchone()["porcentagem_presenca"] or 0
+        registro_hoje = cursor.fetchone()
 
-    cursor.close()
+        status_hoje = registro_hoje["status"] if registro_hoje else "Sem registro"
 
-    # === converção dos dados do tipo datetime p/ string ===
-    def converter_para_str(obj):
-        if isinstance(obj, datetime):
-            return obj.strftime("%Y-%m-%d %H:%M:%S")
-        
-        if isinstance(obj, date):
-            return obj.strftime("%Y-%m-%d")
-        
-        if isinstance(obj, time):
-            return obj.strftime("%H:%M:%S")
-        
-        if isinstance(obj, timedelta):
-            return str(obj)
+        # === CONVERTER DATAS ===
+        def formatar(valor):
+            if isinstance(valor, datetime):
+                return valor.strftime("%Y-%m-%d %H:%M:%S")
+            if isinstance(valor, date):
+                return valor.strftime("%Y-%m-%d")
+            return valor
 
-        return obj
+        for item in entradas:
+            item["data"] = formatar(item["data"])
 
-    for lista in [entradas, comunicados]:
-        for item in lista:
-            for chave, valor in item.items():
-                item[chave] = converter_para_str(valor)
+        for item in comunicados:
+            item["data_publicacao"] = formatar(item["data_publicacao"])
 
-    # === status do dia ===
-    hoje_date = datetime.now().date()
+        # === FINALIZA CURSOR DE BUSCA E SALVA NO JSON ===
+        cursor.close()
+        db.close()
 
-    cursor.execute(
-        """
-        SELECT status
-        FROM entradas
-        WHERE aluno_id = %s AND DATE(data) = %s
-        """,
-        (aluno_id, hoje_date)
-    )
+        resultado["entradas"] = entradas
+        resultado["comunicados"] = comunicados
+        resultado["presenca"] = presenca
+        resultado["status_hoje"] = status_hoje
 
-    registro_hoje = cursor.fetchone()
+        return jsonify(resultado)
 
-    if registro_hoje:
-        status_hoje = registro_hoje["status"]
-    else:
-        status_hoje = "Ainda sem registro hoje"
+    except Exception as e:
+        print("Erro no endpoint /dados:", e)
+        return jsonify({"erro": "Erro interno no servidor"}), 500
 
-    # === Salvando dados no json ===
-    dados["comunicados"] = comunicados
-    dados["entradas"] = entradas
-    dados["presenca"] = presenca
-    dados["status_hoje"] = status_hoje
 
-    return jsonify(dados)
 
+# === RUN ===
 if __name__ == "__main__":
-    app.run(debug= True, host="0.0.0.0")
+    app.run(debug=True, host="0.0.0.0")
