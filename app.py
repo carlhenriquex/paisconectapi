@@ -11,14 +11,26 @@ CORS(app)
 def get_db_connection():
     try:
         return mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="",
-            database="escola_db"
+            host= "69.6.212.194",
+            user="esco6819_api_intelbras",
+            password="6WGTaYjQwfMBvlE",
+            database="esco6819_admin_paiconect"
         )
     except mysql.connector.Error as erro:
         print("Erro ao conectar ao banco:", erro)
         return None
+    
+# def get_db_connection():
+#     try:
+#         return mysql.connector.connect(
+#             host= "localhost",
+#             user="root",
+#             password="",
+#             database="escola_db"
+#         )
+#     except mysql.connector.Error as erro:
+#         print("Erro ao conectar ao banco:", erro)
+#         return None
 
 
 # === HOME ===
@@ -90,19 +102,19 @@ def dados(aluno_id):
         if not db:
             return jsonify({"erro": "Falha ao conectar ao banco"}), 500
 
-        cursor = db.cursor(dictionary=True)
-
         # === COMUNICADOS ===
+        cursor = db.cursor(dictionary=True)
         cursor.execute("""
             SELECT id, titulo, imagem_url, conteudo, data_publicacao
             FROM comunicados
             WHERE YEAR(data_publicacao) = %s
             ORDER BY data_publicacao DESC
         """, (ano_atual,))
-
         comunicados = cursor.fetchall()
+        cursor.close()
 
         # === ENTRADAS DO ALUNO ===
+        cursor = db.cursor(dictionary=True)
         if mes:
             cursor.execute("""
                 SELECT id, status, data
@@ -115,11 +127,22 @@ def dados(aluno_id):
                 FROM entradas
                 WHERE aluno_id = %s
             """, (aluno_id,))
-
         entradas = cursor.fetchall()
+        cursor.close()
+
+        # === STATUS DO DIA ===
+        cursor = db.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT status
+            FROM entradas
+            WHERE aluno_id = %s AND DATE(data) = %s
+        """, (aluno_id, hoje_date))
+        registro_hoje = cursor.fetchone()
+        cursor.close()
 
         # === PORCENTAGEM DE PRESENÇA ===
         if mes:
+            cursor = db.cursor(dictionary=True)
             cursor.execute("""
                 SELECT ROUND(
                     (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
@@ -128,6 +151,7 @@ def dados(aluno_id):
                 WHERE aluno_id = %s AND MONTH(data) = %s
             """, (aluno_id, mes))
         else:
+            cursor = db.cursor(dictionary=True)
             cursor.execute("""
                 SELECT ROUND(
                     (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
@@ -138,30 +162,26 @@ def dados(aluno_id):
 
         presenca = cursor.fetchone()["p"] or 0
 
-        # === STATUS DO DIA ===
-        cursor.execute("""
-            SELECT status
-            FROM entradas
-            WHERE aluno_id = %s AND DATE(data) = %s
-        """, (aluno_id, hoje_date))
-
-        registro_hoje = cursor.fetchone()
-
         status_hoje = registro_hoje["status"] if registro_hoje else "Sem registro"
 
         # === CONVERTER DATAS ===
         def formatar(valor):
+            if valor is None:
+                return None
+
             if isinstance(valor, datetime):
                 return valor.strftime("%Y-%m-%d %H:%M:%S")
+
             if isinstance(valor, date):
                 return valor.strftime("%Y-%m-%d")
-            return valor
+
+            return str(valor)
 
         for item in entradas:
-            item["data"] = formatar(item["data"])
+            item["data"] = formatar(item.get("data"))
 
         for item in comunicados:
-            item["data_publicacao"] = formatar(item["data_publicacao"])
+            item["data_publicacao"] = formatar(item.get("data_publicacao"))
 
         # === FINALIZA CURSOR DE BUSCA E SALVA NO JSON ===
         cursor.close()
@@ -177,7 +197,6 @@ def dados(aluno_id):
     except Exception as e:
         print("Erro no endpoint /dados:", e)
         return jsonify({"erro": "Erro interno no servidor"}), 500
-
 
 
 # === RUN ===
