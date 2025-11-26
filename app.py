@@ -90,12 +90,13 @@ def dados(aluno_id):
         mes = request.args.get("mes", type=int)
         ano_atual = datetime.now().year
         hoje_date = datetime.now().date()
+        hora_atual = datetime.now().time()
 
         resultado = {
             "entradas": [],
             "comunicados": [],
             "presenca": 0,
-            "status_hoje": "Sem registro"
+            "status_hoje": []
         }
 
         db = get_db_connection()
@@ -117,71 +118,71 @@ def dados(aluno_id):
         cursor = db.cursor(dictionary=True)
         if mes:
             cursor.execute("""
-                SELECT id, status, data
+                SELECT id, status, data, hora
                 FROM entradas
                 WHERE aluno_id = %s AND MONTH(data) = %s
             """, (aluno_id, mes))
+
         else:
             cursor.execute("""
-                SELECT id, status, data
+                SELECT id, status, data, hora
                 FROM entradas
                 WHERE aluno_id = %s
             """, (aluno_id,))
         entradas = cursor.fetchall()
         cursor.close()
 
+        # === CALCULAR PORCENTAGEM DE PRESENÇA ===
+        presentes = sum(1 for entrada in entradas if entrada["status"] == "presente" or entrada["status"] == "atraso")
+        total = len(entradas)
+
+        presenca = round((presentes / total) * 100, 2) if total > 0 else 0
+
         # === STATUS DO DIA ===
-        cursor = db.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT status
-            FROM entradas
-            WHERE aluno_id = %s AND DATE(data) = %s
-        """, (aluno_id, hoje_date))
-        registro_hoje = cursor.fetchone()
-        cursor.close()
+        entrada_hoje = next((entrada for entrada in entradas if entrada["data"] == hoje_date), None)
 
-        # === PORCENTAGEM DE PRESENÇA ===
-        if mes:
-            cursor = db.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT ROUND(
-                    (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
-                ) AS p
-                FROM entradas
-                WHERE aluno_id = %s AND MONTH(data) = %s
-            """, (aluno_id, mes))
+        if entrada_hoje:
+            status_hoje = [
+                {
+                    "status": entrada_hoje["status"],
+                    "data": entrada_hoje["data"],
+                    "hora": entrada_hoje["hora"],
+                    "descricao": f"ola mundo, {entrada_hoje['status']}"
+                }
+            ]
+
         else:
-            cursor = db.cursor(dictionary=True)
-            cursor.execute("""
-                SELECT ROUND(
-                    (SUM(CASE WHEN status = 'presente' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2
-                ) AS p
-                FROM entradas
-                WHERE aluno_id = %s
-            """, (aluno_id,))
-
-        presenca = cursor.fetchone()["p"] or 0
-
-        status_hoje = registro_hoje["status"] if registro_hoje else "Sem registro"
+            status_hoje = [
+                {
+                    "status": "Sem registro",
+                    "data": hoje_date,
+                    "hora": hora_atual,
+                    "descricao": "Ainda sem registro hoje"
+                }
+            ]
 
         # === CONVERTER DATAS ===
         def formatar(valor):
             if valor is None:
                 return None
-
             if isinstance(valor, datetime):
                 return valor.strftime("%Y-%m-%d %H:%M:%S")
-
             if isinstance(valor, date):
                 return valor.strftime("%Y-%m-%d")
-
+            if isinstance(valor, time):
+                return valor.strftime("%H:%M:%S")
             return str(valor)
 
         for item in entradas:
-            item["data"] = formatar(item.get("data"))
+            item["data"] = formatar(item["data"])
+            item["hora"] = formatar(item["hora"])
 
         for item in comunicados:
-            item["data_publicacao"] = formatar(item.get("data_publicacao"))
+            item["data_publicacao"] = formatar(item["data_publicacao"])
+
+        for item in status_hoje:
+            item["data"] = formatar(item["data"])
+            item["hora"] = formatar(item["hora"])
 
         # === FINALIZA CURSOR DE BUSCA E SALVA NO JSON ===
         cursor.close()
