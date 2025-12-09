@@ -125,7 +125,7 @@ def dados(aluno_id):
             """, (aluno_id, mes))
         else:
             cursor.execute("""
-                SELECT id, status, data, hora
+                SELECT id, status, data AS dataEntrada, hora AS horaEntrada
                 FROM entradas
                 WHERE aluno_id = %s
                 ORDER BY data DESC, hora DESC
@@ -141,14 +141,14 @@ def dados(aluno_id):
         presenca = round((presentes / total) * 100, 2) if total > 0 else 0
 
         # === STATUS DO DIA ===
-        entrada_hoje = next((entrada for entrada in entradas if entrada["data"] == hoje_date), None)
+        entrada_hoje = next((entrada for entrada in entradas if entrada["dataEntrada"] == hoje_date), None)
 
         if entrada_hoje:
             status_hoje = [
                 {
                     "status": entrada_hoje["status"],
-                    "dataStatus": entrada_hoje["data"],
-                    "horaStatus": entrada_hoje["hora"],
+                    "dataStatus": entrada_hoje["dataEntrada"],
+                    "horaStatus": entrada_hoje["horaEntrada"],
                     "descricao": f"ola mundo, {entrada_hoje['status']}"
                 }
             ]
@@ -176,15 +176,15 @@ def dados(aluno_id):
             return str(valor)
 
         for item in entradas:
-            item["data"] = formatar(item["data"])
-            item["hora"] = formatar(item["hora"])
+            item["dataEntrada"] = formatar(item["dataEntrada"])
+            item["horaEntrada"] = formatar(item["horaEntrada"])
 
         for item in comunicados:
-            item["data_publicacao"] = formatar(item["data_publicacao"])
+            item["dataComunicado"] = formatar(item["dataComunicado"])
 
         for item in status_hoje:
-            item["data"] = formatar(item["data"])
-            item["hora"] = formatar(item["hora"])
+            item["dataStatus"] = formatar(item["dataStatus"])
+            item["horaStatus"] = formatar(item["horaStatus"])
 
         # === FINALIZA CURSOR DE BUSCA E SALVA NO JSON ===
         cursor.close()
@@ -193,7 +193,7 @@ def dados(aluno_id):
         resultado["entradas"] = entradas
         resultado["comunicados"] = comunicados
         resultado["presenca"] = presenca
-        resultado["status_hoje"] = status_hoje
+        resultado["statusHoje"] = status_hoje
 
         return jsonify(resultado)
 
